@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+<body>
+  <script>
+    // 实现睡眠功能
+    const sleep = (time) => {
+      const startTime = Date.now();
+      // 一直在循环中
+      while(Date.now() - startTime < time) {
+        console.log("sleeping", Date.now() - startTime < time)
+      }
+    }
+    const works = [
+      () => {
+        console.log("sleep before1")
+        sleep(20);
+        console.log("sleep after1")
+      },
+      () => {
+        console.log("sleep before2")
+        sleep(20);
+        console.log("sleep after2")
+      },
+      () => {
+        console.log("sleep before3")
+        sleep(20);
+        console.log("sleep after3")
+      }
+    ];
+
+    function workLoop(deadline) {
+      // didTimeout: 该任务是否已经超时
+      // timeRemaining: timeRemaining()告知此帧还剩余多少时间
+      // 当不符合条件时，把执行权归还给浏览器
+      while((deadline.timeRemaining() > 0 || deadline.didTimeout) && works.length) {
+        performUnitOfWork();
+      }
+
+      // 说明还有任务
+      if(works.length) {
+        requestIdleCallback(workLoop, {timeout: 1000}); 
+      }
+    }
+    requestIdleCallback(workLoop, {timeout: 1000}); // 告诉浏览器: 在1000毫秒之后，即使没有空余时间也要帮我执行。
+
+    function performUnitOfWork() {
+      let work = works.splice(0, 1)[0];
+      work();
+    }
+  </script>
+</body>
+</html>
