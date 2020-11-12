@@ -79,15 +79,6 @@ function commitWork(currentFiber) {
 
   // 清除当前节点的 effectTag
   currentFiber.effectTag = null;
-  // let dom;
-  // const { stateNode, tag } = currentFiber;
-  // if (!stateNode) {
-  //   // 创建节点
-  //   dom = document.createElement(tag);
-  //   // 填充属性
-  //   currentFiber.stateNode = dom;
-  // } else {
-  // }
 }
 
 // 需要处理的节点：A1 B1 C1 C2

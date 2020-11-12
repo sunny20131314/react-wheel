@@ -56,8 +56,8 @@ function setAllProps(dom, oldProps, newProps) {
 
   // 新增 & 修改
   for (let newKey in newProps) {
-    if (newKey !== 'children' && !isEqual(oldProps.newKey, newProps.newKey)) {
-      setProps(dom, newKey, newProps.newKey);
+    if (newKey !== 'children' && !isEqual(oldProps[newKey], newProps[newKey])) {
+      setProps(dom, newKey, newProps[newKey]);
     }
   }
 }
