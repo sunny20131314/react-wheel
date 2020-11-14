@@ -10,15 +10,18 @@ const {
   TAG_HOST,
   ELEMENT_TEXT,
   PLACEMENT,
-  // UPDATE,
-  // DELETION,
+  UPDATE,
+  DELETION,
 } = require('./constants');
 const { setProps } = require('./utils');
+const { isEqual } = require('lodash');
 
 // RootFiber 的根节点, 正在渲染中的的root
 let workInProgressRoot = null;
 // 当前页面已渲染的 根节点: root
-// let currentRoot = null;
+let currentRoot = null;
+
+const deletions = [];
 
 // 记录下一个执行单元
 let nextUnitOfWork = null;
@@ -41,7 +44,10 @@ function workLoop(deadline) {
   if (nextUnitOfWork) {
     requestIdleCallback(workLoop, { timeout: 1000 });
   } else {
-    console.log('workLoop -> nextUnitOfWork, 执行阶段结束啦');
+    console.log(
+      'workLoop -> nextUnitOfWork, render阶段结束啦, 将要渲染的workInProgressRoot:',
+      workInProgressRoot
+    );
     // 渲染dom
     commitRoot();
   }
@@ -49,6 +55,8 @@ function workLoop(deadline) {
 
 // 开始了提交阶段, 从根节点开始
 function commitRoot() {
+  deletions.map(commitWork);
+
   let currentFiber = workInProgressRoot.firstEffect;
 
   while (currentFiber) {
@@ -56,8 +64,15 @@ function commitRoot() {
     currentFiber = currentFiber.nextEffect;
   }
 
-  workInProgressRoot.firstEffect = workInProgressRoot.lastEffect = null;
-  currentFiber = workInProgressRoot;
+  deletions.length = 0;
+  if (workInProgressRoot) {
+    // why: 为何会存在这种情况
+    workInProgressRoot.lastEffect = null;
+    workInProgressRoot.firstEffect = null;
+  } else {
+    console.warn('commitRoot -> workInProgressRoot', workInProgressRoot);
+  }
+  currentRoot = workInProgressRoot;
   workInProgressRoot = null;
 }
 
@@ -68,13 +83,17 @@ function commitWork(currentFiber) {
   }
 
   const { return: returnFiber, effectTag } = currentFiber;
-  // todo: children 的 stateNode 还不存在，children在哪里渲染...
-  console.log('commitWork -> currentFiber', currentFiber, currentFiber.props.text || '');
-  const returnDom = returnFiber.stateNode;
+  const returnDom = returnFiber?.stateNode;
+
+  // console.log('commitWork -> currentFiber', currentFiber, currentFiber?.props?.text || '');
 
   // 把当前节点内容挂载到父节点上
   if (effectTag === PLACEMENT) {
     returnDom.appendChild(currentFiber.stateNode);
+  } else if (effectTag === UPDATE) {
+    updateDom(currentFiber.stateNode, currentFiber.alternate.props, currentFiber.props);
+  } else if (effectTag === DELETION) {
+    returnDom.removeChild(currentFiber.stateNode);
   }
 
   // 清除当前节点的 effectTag
@@ -112,12 +131,12 @@ function performaUnitOfWork(fiber) {
  */
 function beginWork(currentFiber) {
   // A1 B1 C1 C2 B2
-  console.log('beginWork -> currentFiber', currentFiber, currentFiber.props.text || '');
+  // console.log('beginWork -> currentFiber', currentFiber, currentFiber?.props?.text || '');
   const { tag } = currentFiber;
   if (tag === TAG_ROOT) {
     updateHostRoot(currentFiber);
   } else if (tag === TAG_HOST) {
-    // TODO: 创建节点~
+    // 创建节点
     updateHost(currentFiber);
   } else if (tag === TAG_TEXT) {
     updateHostText(currentFiber);
@@ -151,7 +170,8 @@ function createDom(currentFiber) {
   // span div
   if (tag === TAG_HOST) {
     const stateNode = document.createElement(type);
-    // note: 直接在这里更新dom props? why: 不是commit阶段？？？
+    // note: 直接在这里设置刚创建的 dom相关 props
+    // 1. 此时节点还未挂载到 document 上
     updateDom(stateNode, {}, props);
     return stateNode;
   }
@@ -163,11 +183,13 @@ function updateDom(stateNode, oldProps, newProps) {
 
 // 更新根节点
 function updateHostRoot(currentFiber) {
+  // 上一次渲染的 alternate
+  currentFiber.alternate = currentRoot;
   let newChildren = currentFiber.props.children;
   reconcileChildren(currentFiber, newChildren);
 }
 
-// 创建子fiber 及其链表
+// 创建子fiber 及其链表, 如果非初始化，则复用上一次的~
 // note: 对每个子节点的更改（增、删、改）有所掌握
 function reconcileChildren(currentFiber, newChildren) {
   // 新子节点的索引
@@ -175,29 +197,64 @@ function reconcileChildren(currentFiber, newChildren) {
   // 记录上一个新的子fiber
   let prevSibling;
 
+  const alternate = currentFiber?.alternate;
+  let alternateChild = alternate?.child || null; // 取出虚拟节点
   while (newChildrenIndex < newChildren.length) {
     let newChild = newChildren[newChildrenIndex]; // 取出虚拟节点
-    const { type } = newChild;
+    // note: 可放置在初次渲染
     let tag;
-    if (type === ELEMENT_TEXT) {
+    if (newChild.type === ELEMENT_TEXT) {
       tag = TAG_TEXT; // 文本节点
-    } else if (typeof type === 'string') {
+    } else if (typeof newChild.type === 'string') {
       tag = TAG_HOST; // 原生节点
     }
+
+    let newFiber;
+    // 初次渲染 or 新增节点
+    if (!alternateChild) {
+      newFiber = {
+        tag,
+        type: newChild.type,
+        props: newChild.props,
+        alternate: null,
+        stateNode: null, // 因为还没有创建真实dom节点
+        return: currentFiber,
+        effectTag: PLACEMENT, // 副作用标识，why: render阶段会收集副作用
+        // 只放置出钱节点（有更新的）的fiber, 未出钱不收集
+        // 与完成顺序一致，在完成时填充 why:
+        nextEffect: null, //单链表
+      };
+    } else if (newChild.type === alternateChild?.type) {
+      // 非初次渲染：说明是同一类型， 同一节点
+      newFiber = {
+        tag,
+        type: newChild.type,
+        props: newChild.props,
+        alternate: alternateChild,
+        stateNode: alternateChild.stateNode, // 已创建真实dom节点
+        return: currentFiber,
+        effectTag: isEqual(newChild.props, alternateChild.props) ? null : UPDATE,
+        nextEffect: null, //单链表
+      };
+    } else {
+      // 非初次渲染：且非同一节点
+      deletions.push({ ...alternateChild, effectTag: DELETION });
+
+      // 新增新节点
+      newFiber = {
+        tag,
+        type: newChild.type,
+        props: newChild.props,
+        alternate: null,
+        stateNode: null,
+        return: currentFiber,
+        effectTag: PLACEMENT,
+        nextEffect: null,
+      };
+    }
+
     // 函数式
     // class 组件
-
-    let newFiber = {
-      tag,
-      type,
-      props: newChild.props,
-      stateNode: null, // 因为还没有创建真实dom节点
-      return: currentFiber,
-      effectTag: PLACEMENT, // 副作用标识，why: render阶段会收集副作用
-      // 只放置出钱节点（有更新的）的fiber, 未出钱不收集
-      // 与完成顺序一致，在完成时填充 why:
-      nextEffect: null, //单链表
-    };
 
     // 建立联系, why: update 还没有用上哦~ 这里不涉及？
     if (prevSibling) {
@@ -207,7 +264,14 @@ function reconcileChildren(currentFiber, newChildren) {
     }
     prevSibling = newFiber;
 
+    alternateChild = alternateChild?.sibling;
     newChildrenIndex++;
+  }
+
+  // 删除之前渲染的节点
+  while (alternateChild) {
+    deletions.push({ ...alternateChild, effectTag: DELETION });
+    alternateChild = alternateChild?.sibling;
   }
 }
 
@@ -218,19 +282,19 @@ function reconcileChildren(currentFiber, newChildren) {
  *   firstEffect （大儿子）
  *   lastEffect （小儿子）
  *   中间fiber使用 nextEffect 连接
- * @param {object} fiber
+ * @param {object} currentFiber
  */
 function completeWork(currentFiber) {
-  console.log('completeWork -> currentFiber', currentFiber);
   // C1 C2 B1 B2 A1
-  let returnFiber = currentFiber.return;
+  let returnFiber = currentFiber?.return;
 
   if (returnFiber) {
-    // 把自己的大儿子、小儿子挂载到父节点上
+    // 把自己的大儿子挂载到父节点上
     if (!returnFiber.firstEffect) {
       returnFiber.firstEffect = currentFiber.firstEffect;
     }
 
+    // 把自己的小儿子挂载到父节点上
     if (currentFiber.lastEffect) {
       // note: 给父节点挂载自己的第一个子节点，相当于把以下内容都挂载到了父节点~
       // 第一个子节点 -> 下一个子节点 -> ... -> 最后一个子节点
@@ -250,7 +314,7 @@ function completeWork(currentFiber) {
       if (returnFiber.lastEffect) {
         returnFiber.lastEffect.nextEffect = currentFiber;
       } else {
-        // 没有最后节点：一定是大儿子
+        // 没有最后节点：第一次挂载副作用
         returnFiber.firstEffect = currentFiber;
       }
       returnFiber.lastEffect = currentFiber;

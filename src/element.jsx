@@ -55,7 +55,7 @@ module.exports = {
         B2
       </div>
       <div id="B3" key="B3">
-        B3
+        B3 - add
       </div>
     </div>
   ),
@@ -89,7 +89,7 @@ module.exports = {
         </div>
       </div>
       <div id="B2" key="B2">
-        B2 - new
+        B2 - update text
       </div>
     </div>
   ),

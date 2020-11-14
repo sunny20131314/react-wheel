@@ -27,6 +27,8 @@ function setProps(dom, key, value) {
         }
       }
     }
+  } else if (key === 'text') {
+    dom.nodeValue = value;
   } else {
     dom.setAttribute(key, value);
   }
